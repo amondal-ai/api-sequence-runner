@@ -1,0 +1,55 @@
+{
+  "name": "api-sequence-runner",
+  "version": "1.0.0",
+  "description": "A simple, yet powerful tool for orchestrating sequential API calls with data flow between requests",
+  "main": "lib/index.js",
+  "bin": {
+    "api-sequence-runner": "./bin/api-sequence-runner"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint lib/ bin/",
+    "docs": "echo \"Generate documentation\"",
+    "example": "node examples/run-example.js"
+  },
+  "keywords": [
+    "api",
+    "testing",
+    "automation",
+    "workflow",
+    "sequential",
+    "chain",
+    "orchestration",
+    "data-setup",
+    "integration",
+    "rest"
+  ],
+  "author": "Arnab",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amondal-ai/api-sequence-runner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/amondal-ai/api-sequence-runner/issues"
+  },
+  "homepage": "https://github.com/amondal-ai/api-sequence-runner#readme",
+  "files": [
+    "lib/",
+    "bin/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "axios": "^1.6.0",
+    "commander": "^14.0.0",
+    "chalk": "^4.1.2"
+  },
+  "devDependencies": {
+    "eslint": "^9.33.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

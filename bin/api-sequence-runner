@@ -1,0 +1,478 @@
+#!/usr/bin/env node
+
+const { Command } = require("commander");
+const chalk = require("chalk");
+const path = require("path");
+const fs = require("fs");
+const { ScenarioRunner, ScenarioLoader, version } = require("../lib");
+
+const program = new Command();
+
+program
+  .name("api-sequence-runner")
+  .description(
+    "Orchestrate sequential API calls with data flow between requests"
+  )
+  .version(version);
+
+program
+  .command("run <scenario>")
+  .description("Run a specific scenario")
+  .option("-u, --base-url <url>", "API base URL", "http://localhost:3000")
+  .option("-e, --env <environment>", "Environment to use from config file")
+  .option("-d, --dry-run", "Run in dry-run mode (no actual API calls)")
+  .option("-v, --verbose", "Enable verbose output")
+  .option("-c, --config <path>", "Path to configuration file")
+  .option(
+    "-s, --scenarios-dir <path>",
+    "Directory containing scenario files",
+    "./scenarios"
+  )
+  .option("--timeout <ms>", "Request timeout in milliseconds", "10000")
+  .option("--delay <ms>", "Delay between requests in milliseconds", "0")
+  .option(
+    "--header <header>",
+    "Add custom header (can be used multiple times)",
+    collectHeaders,
+    []
+  )
+  .action(async (scenarioName, options) => {
+    try {
+      await runScenario(scenarioName, options);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command("run-all")
+  .description("Run all scenarios in the scenarios directory")
+  .option("-u, --base-url <url>", "API base URL", "http://localhost:3000")
+  .option("-e, --env <environment>", "Environment to use from config file")
+  .option("-d, --dry-run", "Run in dry-run mode (no actual API calls)")
+  .option("-v, --verbose", "Enable verbose output")
+  .option("-c, --config <path>", "Path to configuration file")
+  .option(
+    "-s, --scenarios-dir <path>",
+    "Directory containing scenario files",
+    "./scenarios"
+  )
+  .option("--timeout <ms>", "Request timeout in milliseconds", "10000")
+  .option("--delay <ms>", "Delay between requests in milliseconds", "0")
+  .option(
+    "--header <header>",
+    "Add custom header (can be used multiple times)",
+    collectHeaders,
+    []
+  )
+  .option("--fail-fast", "Stop on first scenario failure")
+  .action(async (options) => {
+    try {
+      await runAllScenarios(options);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command("init")
+  .description("Initialize a new api-sequence-runner project")
+  .option("-d, --dir <path>", "Project directory", ".")
+  .action(async (options) => {
+    try {
+      await initProject(options);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command("create-scenario <name>")
+  .description("Create a new scenario from template")
+  .option(
+    "-s, --scenarios-dir <path>",
+    "Directory for scenario files",
+    "./scenarios"
+  )
+  .action(async (name, options) => {
+    try {
+      await createScenario(name, options);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command("list")
+  .description("List all available scenarios")
+  .option(
+    "-s, --scenarios-dir <path>",
+    "Directory containing scenario files",
+    "./scenarios"
+  )
+  .action(async (options) => {
+    try {
+      await listScenarios(options);
+    } catch (error) {
+      console.error(chalk.red(`Error: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+async function runScenario(scenarioName, options) {
+  console.log(chalk.blue(`🚀 API Sequence Runner v${version}`));
+
+  // load configuration if provided
+  let config = {};
+  if (options.config) {
+    const configPath = path.resolve(options.config);
+    if (fs.existsSync(configPath)) {
+      delete require.cache[require.resolve(configPath)];
+      config = require(configPath);
+      console.log(chalk.gray(`📄 Loaded config: ${configPath}`));
+    } else {
+      console.warn(chalk.yellow(`⚠️  Config file not found: ${configPath}`));
+    }
+  }
+
+  // determine environment configuration
+  let envConfig = {};
+  if (options.env && config.environments) {
+    if (config.environments[options.env]) {
+      envConfig = config.environments[options.env];
+      console.log(chalk.cyan(`🌍 Using environment: ${options.env}`));
+    } else {
+      console.error(
+        chalk.red(`❌ Environment '${options.env}' not found in config`)
+      );
+      console.log(
+        chalk.gray(
+          `Available environments: ${Object.keys(config.environments).join(
+            ", "
+          )}`
+        )
+      );
+      process.exit(1);
+    }
+  } else if (config.default) {
+    envConfig = config.default;
+    console.log(chalk.gray(`🌍 Using default environment`));
+  }
+
+  // build runner options with precedence: CLI options > environment config > defaults
+  const runnerOptions = {
+    baseUrl: options.baseUrl || envConfig.baseUrl || "http://localhost:3000",
+    dryRun: options.dryRun || false,
+    verbose: options.verbose || false,
+    timeout: parseInt(options.timeout) || envConfig.timeout || 10000,
+    requestDelay: parseInt(options.delay) || envConfig.requestDelay || 0,
+    headers: {
+      ...envConfig.headers,
+      ...parseHeaders(options.header),
+    },
+  };
+
+  console.log(chalk.gray(`🔗 Base URL: ${runnerOptions.baseUrl}`));
+  if (Object.keys(runnerOptions.headers).length > 0) {
+    console.log(
+      chalk.gray(`📋 Headers: ${Object.keys(runnerOptions.headers).join(", ")}`)
+    );
+  }
+
+  const runner = new ScenarioRunner(runnerOptions);
+  const loader = new ScenarioLoader(options.scenariosDir);
+
+  const scenario = loader.loadScenario(scenarioName);
+
+  // pass config variables to the scenario runner
+  const configVariables = config.variables || {};
+
+  await runner.runScenarioConfig(scenario, configVariables);
+}
+
+function collectHeaders(value, previous) {
+  return previous.concat([value]);
+}
+
+function parseHeaders(headerArray) {
+  const headers = {};
+  if (headerArray && Array.isArray(headerArray)) {
+    headerArray.forEach((header) => {
+      const [key, ...valueParts] = header.split(":");
+      if (key && valueParts.length > 0) {
+        headers[key.trim()] = valueParts.join(":").trim();
+      }
+    });
+  }
+  return headers;
+}
+
+async function runAllScenarios(options) {
+  console.log(chalk.blue(`🚀 API Sequence Runner v${version}`));
+
+  // load configuration if provided
+  let config = {};
+  if (options.config) {
+    const configPath = path.resolve(options.config);
+    if (fs.existsSync(configPath)) {
+      delete require.cache[require.resolve(configPath)];
+      config = require(configPath);
+      console.log(chalk.gray(`📄 Loaded config: ${configPath}`));
+    }
+  }
+
+  // determine environment configuration
+  let envConfig = {};
+  if (options.env && config.environments) {
+    if (config.environments[options.env]) {
+      envConfig = config.environments[options.env];
+      console.log(chalk.cyan(`🌍 Using environment: ${options.env}`));
+    } else {
+      console.error(
+        chalk.red(`❌ Environment '${options.env}' not found in config`)
+      );
+      process.exit(1);
+    }
+  } else if (config.default) {
+    envConfig = config.default;
+    console.log(chalk.gray(`🌍 Using default environment`));
+  }
+
+  // build runner options with precedence: CLI options > environment config > defaults
+  const runnerOptions = {
+    baseUrl: options.baseUrl || envConfig.baseUrl || "http://localhost:3000",
+    dryRun: options.dryRun || false,
+    verbose: options.verbose || false,
+    timeout: parseInt(options.timeout) || envConfig.timeout || 10000,
+    requestDelay: parseInt(options.delay) || envConfig.requestDelay || 0,
+    headers: {
+      ...envConfig.headers,
+      ...parseHeaders(options.header),
+    },
+  };
+
+  const runner = new ScenarioRunner(runnerOptions);
+  const loader = new ScenarioLoader(options.scenariosDir);
+
+  const scenarios = loader.listScenarios();
+
+  if (scenarios.length === 0) {
+    console.log(chalk.yellow("No scenarios found in", options.scenariosDir));
+    return;
+  }
+
+  console.log(chalk.cyan(`Found ${scenarios.length} scenarios to run\n`));
+
+  let successful = 0;
+  let failed = 0;
+
+  for (const scenarioName of scenarios) {
+    try {
+      console.log(chalk.blue(`\n${"=".repeat(60)}`));
+      const scenario = loader.loadScenario(scenarioName);
+
+      // pass config variables to the scenario runner
+      const configVariables = config.variables || {};
+      await runner.runScenarioConfig(scenario, configVariables);
+
+      successful++;
+      console.log(chalk.green(`✅ Completed: ${scenarioName}`));
+    } catch (error) {
+      failed++;
+      console.error(chalk.red(`❌ Failed: ${scenarioName} - ${error.message}`));
+
+      if (options.failFast) {
+        throw new Error(`Stopped on first failure: ${scenarioName}`);
+      }
+    }
+  }
+
+  console.log(chalk.blue(`\n${"=".repeat(60)}`));
+  console.log(chalk.cyan("📊 SUMMARY"));
+  console.log(chalk.green(`✅ Successful: ${successful}`));
+  console.log(chalk.red(`❌ Failed: ${failed}`));
+  console.log(chalk.blue(`📋 Total: ${successful + failed}`));
+
+  if (failed > 0 && !options.failFast) {
+    process.exit(1);
+  }
+}
+
+async function initProject(options) {
+  const projectDir = path.resolve(options.dir);
+
+  console.log(chalk.blue("🏗️  Initializing API Sequence Runner project..."));
+
+  // create directories
+  const dirs = ["scenarios", "config"];
+  for (const dir of dirs) {
+    const dirPath = path.join(projectDir, dir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+      console.log(chalk.green(`✅ Created directory: ${dir}/`));
+    }
+  }
+
+  // copy example files
+  const templateDir = path.join(__dirname, "../templates");
+
+  // copy example scenario
+  const exampleScenarioPath = path.join(projectDir, "scenarios", "example.js");
+  if (!fs.existsSync(exampleScenarioPath)) {
+    const templatePath = path.join(templateDir, "example-scenario.js");
+    if (fs.existsSync(templatePath)) {
+      fs.copyFileSync(templatePath, exampleScenarioPath);
+      console.log(
+        chalk.green("✅ Created example scenario: scenarios/example.js")
+      );
+    }
+  }
+
+  // copy config template
+  const configPath = path.join(projectDir, "config", "api-config.js");
+  if (!fs.existsSync(configPath)) {
+    const templatePath = path.join(templateDir, "api-config.js");
+    if (fs.existsSync(templatePath)) {
+      fs.copyFileSync(templatePath, configPath);
+      console.log(chalk.green("✅ Created config: config/api-config.js"));
+    }
+  }
+
+  // create README
+  const readmePath = path.join(projectDir, "README.md");
+  if (!fs.existsSync(readmePath)) {
+    const readmeContent = `# API Sequence Runner Project
+
+This project uses API Sequence Runner to orchestrate sequential API calls.
+
+## Getting Started
+
+1. Configure your API settings in \`config/api-config.js\`
+2. Create scenarios in the \`scenarios/\` directory
+3. Run scenarios: \`api-sequence-runner run example\`
+
+## Available Commands
+
+- \`api-sequence-runner run <scenario>\` - Run a specific scenario
+- \`api-sequence-runner run-all\` - Run all scenarios
+- \`api-sequence-runner list\` - List available scenarios
+- \`api-sequence-runner create-scenario <name>\` - Create a new scenario
+
+## Documentation
+
+Visit https://github.com/amondal-ai/api-sequence-runner for full documentation.
+`;
+
+    fs.writeFileSync(readmePath, readmeContent);
+    console.log(chalk.green("✅ Created README.md"));
+  }
+
+  console.log(chalk.blue("\n🎉 Project initialized successfully!"));
+  console.log(chalk.cyan("\nNext steps:"));
+  console.log("  1. Edit config/api-config.js with your API settings");
+  console.log("  2. Run: api-sequence-runner run example");
+  console.log(
+    "  3. Create new scenarios with: api-sequence-runner create-scenario <name>"
+  );
+}
+
+async function createScenario(name, options) {
+  const scenariosDir = path.resolve(options.scenariosDir);
+
+  if (!fs.existsSync(scenariosDir)) {
+    fs.mkdirSync(scenariosDir, { recursive: true });
+  }
+
+  const scenarioPath = path.join(scenariosDir, `${name}.js`);
+
+  if (fs.existsSync(scenarioPath)) {
+    throw new Error(`Scenario already exists: ${scenarioPath}`);
+  }
+
+  const templatePath = path.join(
+    __dirname,
+    "../templates/scenario-template.js"
+  );
+
+  if (fs.existsSync(templatePath)) {
+    let template = fs.readFileSync(templatePath, "utf8");
+    template = template.replace(/{{SCENARIO_NAME}}/g, name);
+    template = template.replace(
+      /{{SCENARIO_DESCRIPTION}}/g,
+      `Description for ${name} scenario`
+    );
+
+    fs.writeFileSync(scenarioPath, template);
+    console.log(chalk.green(`✅ Created scenario: ${scenarioPath}`));
+  } else {
+    // create basic template if template file doesn't exist
+    const basicTemplate = `module.exports = {
+  name: "${name}",
+  description: "Description for ${name} scenario",
+  
+  steps: [
+    {
+      name: "step1",
+      method: "GET",
+      url: "/api/example",
+      validate: (response) => response.status === 200,
+      extract: {
+        // Extract variables for next steps
+        // exampleId: "data.id"
+      }
+    }
+    // Add more steps here
+  ]
+};
+`;
+
+    fs.writeFileSync(scenarioPath, basicTemplate);
+    console.log(chalk.green(`✅ Created scenario: ${scenarioPath}`));
+  }
+}
+
+async function listScenarios(options) {
+  const loader = new ScenarioLoader(options.scenariosDir);
+  const scenarios = loader.listScenarios();
+
+  if (scenarios.length === 0) {
+    console.log(chalk.yellow(`No scenarios found in ${options.scenariosDir}`));
+    return;
+  }
+
+  console.log(chalk.blue(`📋 Available scenarios in ${options.scenariosDir}:`));
+
+  for (const scenarioName of scenarios) {
+    try {
+      const scenario = loader.loadScenario(scenarioName);
+      const stepCount = scenario.steps ? scenario.steps.length : 0;
+      console.log(
+        chalk.green(`  • ${scenarioName}`),
+        chalk.gray(`(${stepCount} steps)`)
+      );
+
+      if (scenario.description) {
+        console.log(chalk.gray(`    ${scenario.description}`));
+      }
+    } catch (error) {
+      console.log(chalk.red(`  • ${scenarioName}`), chalk.gray("(invalid)"));
+    }
+  }
+}
+
+// handle uncaught errors
+process.on("unhandledRejection", (error) => {
+  console.error(chalk.red("Unhandled promise rejection:"), error);
+  process.exit(1);
+});
+
+process.on("SIGINT", () => {
+  console.log(chalk.yellow("\n👋 Goodbye!"));
+  process.exit(0);
+});
+
+program.parse(process.argv);
