@@ -165,11 +165,12 @@ async function runScenario(scenarioName, options) {
 
   // build runner options with precedence: CLI options > environment config > defaults
   const runnerOptions = {
-    baseUrl: options.baseUrl || envConfig.baseUrl || "http://localhost:3000",
+    baseUrl: envConfig.baseUrl || "http://localhost:3000",
     dryRun: options.dryRun || false,
     verbose: options.verbose || false,
-    timeout: parseInt(options.timeout) || envConfig.timeout || 10000,
-    requestDelay: parseInt(options.delay) || envConfig.requestDelay || 0,
+    timeout: parseInt(envConfig.timeout) || parseInt(options.timeout) || 10000,
+    requestDelay:
+      parseInt(envConfig.requestDelay) || parseInt(options.delay) || 0,
     headers: {
       ...envConfig.headers,
       ...parseHeaders(options.header),

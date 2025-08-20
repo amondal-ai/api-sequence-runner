@@ -1,6 +1,6 @@
 {
   "name": "api-sequence-runner",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A simple, yet powerful tool for orchestrating sequential API calls with data flow between requests",
   "main": "lib/index.js",
   "bin": {
